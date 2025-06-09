@@ -13,12 +13,23 @@ const snap = new midtransClient.Snap({
 router.post("/create-transaction", async (req, res) => {
   const { userId, cartItems, total } = req.body;
 
+  if (!userId) {
+    return res.status(400).json({ error: "User ID is required" });
+  }
+  if (!Array.isArray(cartItems) || cartItems.length === 0) {
+    return res.status(400).json({ error: "Cart items cannot be empty" });
+  }
+  const grossAmount = Number(total);
+  if (isNaN(grossAmount) || grossAmount <= 0) {
+    return res.status(400).json({ error: "Invalid total amount" });
+  }
+
   const orderId = `ORDER-${Date.now()}`;
 
   const parameter = {
     transaction_details: {
       order_id: orderId,
-      gross_amount: total,
+      gross_amount: grossAmount,
     },
     customer_details: {
       first_name: userId,
@@ -31,24 +42,26 @@ router.post("/create-transaction", async (req, res) => {
     })),
   };
 
+  console.log("Midtrans parameter:", JSON.stringify(parameter, null, 2));
+
   try {
     const transaction = await snap.createTransaction(parameter);
 
-    // Simpan data ke Firestore
     await db.collection("transactions").doc(orderId).set({
       userId,
       cartItems,
-      total,
+      total: grossAmount,
       status: "pending",
       createdAt: new Date().toISOString(),
     });
 
-    res.json({ token: transaction.token });
+    res.json({ token: transaction.token, orderId });
   } catch (error) {
-    console.error("Midtrans Error:", error);
+    console.error("Midtrans Error:", error.response ? error.response.data : error);
     res.status(500).json({ error: "Failed to create transaction" });
   }
 });
+
 
 // Webhook endpoint
 router.post("/midtrans-notification", async (req, res) => {
