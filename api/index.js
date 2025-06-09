@@ -9,6 +9,10 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+app.get('/', (req, res) => {
+  res.send('Backend Buah API is running');
+});
+
 app.use("/api", midtransRoutes);
 
 // Export handler untuk Vercel
