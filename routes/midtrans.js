@@ -57,9 +57,15 @@ router.post("/create-transaction", async (req, res) => {
 
     res.json({ token: transaction.token, orderId });
   } catch (error) {
-    console.error("Midtrans Error:", error.response ? error.response.data : error);
-    res.status(500).json({ error: "Failed to create transaction" });
+  // Jika error dari Midtrans biasanya ada property response.data
+  if (error.response && error.response.data) {
+    console.error("Midtrans Error Response:", error.response.data);
+  } else {
+    console.error("Midtrans Error:", error);
   }
+  res.status(500).json({ error: "Failed to create transaction" });
+}
+
 });
 
 
