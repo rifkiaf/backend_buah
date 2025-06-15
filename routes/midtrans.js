@@ -11,7 +11,7 @@ const snap = new midtransClient.Snap({
 
 // Route untuk membuat token Snap
 router.post("/create-transaction", async (req, res) => {
-  const { userId, cartItems, total } = req.body;
+  const { userId, cartItems, total, displayName } = req.body;
 
   if (!userId) {
     return res.status(400).json({ error: "User ID is required" });
@@ -23,6 +23,9 @@ router.post("/create-transaction", async (req, res) => {
   if (isNaN(grossAmount) || grossAmount <= 0) {
     return res.status(400).json({ error: "Invalid total amount" });
   }
+  if (!displayName) {
+    return res.status(400).json({ error: "Display name is required" });
+  }
 
   const orderId = `ORDER-${Date.now()}`;
 
@@ -32,7 +35,7 @@ router.post("/create-transaction", async (req, res) => {
       gross_amount: grossAmount,
     },
     customer_details: {
-      first_name: userId,
+      first_name: displayName, // Use displayName instead of userId
     },
     item_details: cartItems.map((item) => ({
       id: item.id,
@@ -53,6 +56,7 @@ router.post("/create-transaction", async (req, res) => {
       total: grossAmount,
       status: "pending",
       createdAt: new Date().toISOString(),
+      displayName, // Store displayName in Firestore
     });
 
     res.json({ token: transaction.token, orderId });
@@ -106,7 +110,6 @@ router.post("/update-transaction-status", async (req, res) => {
   }
 });
 
-
 // Webhook endpoint
 router.post("/midtrans-notification", async (req, res) => {
   const notification = req.body;
@@ -142,6 +145,5 @@ router.post("/midtrans-notification", async (req, res) => {
     res.status(500).send("Failed");
   }
 });
-
 
 module.exports = router;
