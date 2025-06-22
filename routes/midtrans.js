@@ -12,8 +12,16 @@ const snap = new midtransClient.Snap({
 
 // Route to create transaction
 router.post("/create-transaction", async (req, res) => {
-  const { userId, cartItems, total, displayName, email, address, phone } =
-    req.body;
+  const {
+    userId,
+    cartItems,
+    total,
+    displayName,
+    email,
+    address,
+    phone,
+    shipping,
+  } = req.body;
 
   // Validate request body
   if (!userId) {
@@ -28,8 +36,8 @@ router.post("/create-transaction", async (req, res) => {
     });
     return res.status(400).json({ error: "Cart items cannot be empty" });
   }
-  const grossAmount = Number(total);
-  if (isNaN(grossAmount) || grossAmount <= 0) {
+  const subtotal = Number(total);
+  if (isNaN(subtotal) || subtotal < 0) {
     console.error("Validation Error: Invalid total amount", { total: total });
     return res.status(400).json({ error: "Invalid total amount" });
   }
@@ -57,15 +65,21 @@ router.post("/create-transaction", async (req, res) => {
     });
     return res.status(400).json({ error: "Phone number is required" });
   }
+  if (!shipping || typeof shipping.cost === "undefined" || !shipping.option) {
+    console.error("Validation Error: Shipping information is required", {
+      requestBody: req.body,
+    });
+    return res.status(400).json({ error: "Shipping information is required" });
+  }
 
-  // Validate that total matches sum of item prices
+  // Validate that total (subtotal) matches sum of item prices
   const calculatedTotal = cartItems.reduce(
     (sum, item) => sum + item.price * item.quantity,
     0
   );
-  if (calculatedTotal !== grossAmount) {
+  if (calculatedTotal !== subtotal) {
     console.error("Validation Error: Total amount does not match cart items", {
-      providedTotal: grossAmount,
+      providedTotal: subtotal,
       calculatedTotal,
       cartItems,
     });
@@ -74,7 +88,25 @@ router.post("/create-transaction", async (req, res) => {
       .json({ error: "Total amount does not match cart items" });
   }
 
+  const shippingCost = Number(shipping.cost);
+  const grossAmount = subtotal + shippingCost;
   const orderId = `ORDER-${Date.now()}`;
+
+  const item_details = cartItems.map((item) => ({
+    id: item.id,
+    price: item.price,
+    quantity: item.quantity,
+    name: item.name,
+  }));
+
+  if (shippingCost > 0) {
+    item_details.push({
+      id: "SHIPPING",
+      price: shippingCost,
+      quantity: 1,
+      name: shipping.option,
+    });
+  }
 
   const parameter = {
     transaction_details: {
@@ -85,12 +117,7 @@ router.post("/create-transaction", async (req, res) => {
       first_name: displayName,
       email: email,
     },
-    item_details: cartItems.map((item) => ({
-      id: item.id,
-      price: item.price,
-      quantity: item.quantity,
-      name: item.name,
-    })),
+    item_details: item_details,
   };
 
   console.log(
@@ -99,14 +126,12 @@ router.post("/create-transaction", async (req, res) => {
   );
 
   try {
-    // Attempt to create transaction with Midtrans
     const transaction = await snap.createTransaction(parameter);
     console.log("Midtrans transaction created successfully:", {
       orderId,
       transaction,
     });
 
-    // Save to Firestore only after successful Midtrans API call
     await db
       .collection("transactions")
       .doc(orderId)
@@ -116,18 +141,19 @@ router.post("/create-transaction", async (req, res) => {
         address,
         phone,
         cartItems,
+        subtotal: subtotal,
+        shipping: shipping,
         total: grossAmount,
         status: "pending",
         createdAt: new Date().toISOString(),
         displayName,
-        midtransTransactionId: transaction.transaction_id || null, // Store Midtrans transaction ID if available
+        midtransTransactionId: transaction.transaction_id || null,
       });
 
     console.log("Transaction saved to Firestore:", { orderId });
 
     return res.json({ token: transaction.token, orderId });
   } catch (error) {
-    // Log detailed error information
     const errorDetails =
       error.response && error.response.data
         ? error.response.data
@@ -203,7 +229,6 @@ router.post("/midtrans-notification", async (req, res) => {
   const notification = req.body;
 
   try {
-    // Validate required fields
     const {
       order_id,
       status_code,
@@ -216,7 +241,6 @@ router.post("/midtrans-notification", async (req, res) => {
       return res.status(400).send("Bad Request: Missing required fields");
     }
 
-    // Validate signature key
     const serverKey = process.env.MIDTRANS_SERVER_KEY;
     const stringToHash = `${order_id}${status_code}${gross_amount}${serverKey}`;
     const calculatedSignature = crypto
@@ -232,7 +256,6 @@ router.post("/midtrans-notification", async (req, res) => {
       return res.status(403).send("Forbidden: Invalid signature key");
     }
 
-    // Update transaction status
     const transactionRef = db.collection("transactions").doc(order_id);
     const transactionSnap = await transactionRef.get();
 
@@ -244,10 +267,9 @@ router.post("/midtrans-notification", async (req, res) => {
     await transactionRef.update({
       status: transaction_status,
       updatedAt: new Date().toISOString(),
-      midtransTransactionId: notification.transaction_id || null, // Store Midtrans transaction ID
+      midtransTransactionId: notification.transaction_id || null,
     });
 
-    // Update stock if transaction is settled
     if (transaction_status === "settlement") {
       const { cartItems } = transactionSnap.data();
       if (!cartItems || !Array.isArray(cartItems)) {
